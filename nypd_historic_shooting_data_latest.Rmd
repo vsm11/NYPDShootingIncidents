@@ -1,0 +1,192 @@
+---
+title: "NYPD Data"
+author: "Venus Miskinyar"
+date: "2023-12-01"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(tidyverse)
+```
+
+```{r}
+# Install tidyverse package if not already installed
+if (!requireNamespace("tidyverse", quietly = TRUE)) {
+  install.packages("tidyverse")
+}
+```
+
+# NYPD Shooting Historic Incidents
+The following is an analysis of [NYPD Shooting incidents](https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic) in recent history. The data was retrieved from City of New York: [NYPD Shooting Incident Data (Historic)](https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD)
+
+## Import Data
+1. Set the url vector with the csv path and name: 
+```{r echo=TRUE}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+```
+2. Read the CSV file:
+```{r echo=TRUE}
+nypd_shooting_data <- read_csv(url[1])
+```
+
+## Tidy the data
+1. View the raw data: 
+```{r echo=TRUE}
+nypd_shooting_data
+```
+2. Remove data elements that pertain to exact locations or keys/codes that are specific to precincts etc. Also we will be focusing on victim data and therefore remove any perpetrator data: 
+```{r echo=TRUE}
+nypd_shooting_data <- nypd_shooting_data[, !names(nypd_shooting_data) %in% c("INCIDENT_KEY", "OCCUR_TIME", "LOC_OF_OCCUR_DESC","LOCATION_DESC","LOC_CLASSFCTN_DESC","Latitude","Longitude","PRECINCT","JURISDICTION_CODE","LOCATION_DESC","X_COORD_CD","Y_COORD_CD","Lon_Lat","PERP_AGE_GROUP","PERP_SEX", "PERP_RACE")]
+nypd_shooting_data
+```
+3. Convert data type for OCCUR_DATE to Date Object:
+```{r echo=TRUE}
+nypd_shooting_data$OCCUR_DATE <- as.Date(nypd_shooting_data$OCCUR_DATE, format="%m/%d/%Y")
+nypd_shooting_data
+```
+4. Show the minimum and maximum dates to determine the date range for the data
+```{r echo=TRUE}
+data_date_range <- nypd_shooting_data %>%
+ summarize(min_date = min(OCCUR_DATE),
+max_date = max(OCCUR_DATE))
+data_date_range
+```
+
+5. Summarize data by year and total number of shooting incidents for each year sorted by number of shooting incidents
+```{r echo=TRUE}
+summarized_data <- nypd_shooting_data %>%
+    filter(!is.na(OCCUR_DATE)) %>%
+mutate(Year = lubridate::year(OCCUR_DATE)) %>%
+group_by (Year) %>%
+summarize(row_count = n(), .groups="drop") 
+summarized_data
+```
+
+6. Show the minimum and maximum number of shootings and the year that those occurred on.
+```{r echo=TRUE}
+min_year <- summarized_data$Year[which.min(summarized_data$row_count)] 
+max_year <- summarized_data$Year[which.max(summarized_data$row_count)] 
+
+min_count <- min(summarized_data$row_count) 
+max_count <- max(summarized_data$row_count)
+
+min_max_count_year <- data.frame("Shooting Incident Count" = c(min_count, max_count), 'Year' = c(min_year, max_year))
+min_max_count_year
+```
+
+
+## Plot the summarized data
+1. Create a line plot to visualize the data
+```{r echo=TRUE}
+x_axis = summarized_data$Year
+y_axis = summarized_data$row_count
+
+ggplot(summarized_data, aes(x = x_axis, y = y_axis)) +
+     geom_line()  +
+     labs(x = "Year", y = "Number of Shooting Incidents", title = "NYPD Shooting Historic Incidents")
+```
+
+
+## Modeling the number of male and female shooting incidents
+1. Summarize and display the number of male shootings and female shootings by year 
+```{r echo=TRUE}
+victim_data_by_year <- nypd_shooting_data %>%
+filter(!is.na(OCCUR_DATE)) %>%
+mutate(Year = lubridate::year(OCCUR_DATE)) %>%
+group_by (Year, VIC_SEX) %>%
+summarize(row_count = n(), .groups="drop") %>%
+arrange(desc(Year))
+victim_data_by_year
+```
+
+2. Model the number of male and female shooting incidents
+```{r echo=TRUE}
+victim_data_by_year <- victim_data_by_year %>%
+mutate(Male = ifelse(VIC_SEX == "M", 1, 0), Female = ifelse(VIC_SEX == "F", 1, 0))
+model = lm(row_count ~ Male + Female, data=victim_data_by_year)
+summary(model)
+```
+The model summary indicates that model isn't well-fitted since the residuals and the standard error values are higher than expected.
+
+
+3. Create a prediction model for the number of male and female shooting incidents
+```{r echo=TRUE}
+male_data <- data.frame(Male = 1, Female = 0)
+male_victim_prediction <- predict(model, newdata = male_data)
+
+female_data <- data.frame(Male = 0, Female = 1)
+female_victim_prediction <- predict(model, newdata = female_data)
+
+predicted_counts <- data.frame(VIC_SEX = c('Male', 'Female'), predictedCounts = c(male_victim_prediction, female_victim_prediction))
+predicted_counts
+```
+4. Plot the prediction model
+```{r echo=TRUE}
+ggplot(predicted_counts, aes(x = VIC_SEX, y = predictedCounts, fill = VIC_SEX)) +
+geom_bar(stat = "identity", fill = "lightyellow") +    
+labs(x = "Victim Sex", y = "Predicted Number of Shootings", title = "NYPD Shooting Historic Incidents")
+```
+
+## High Level Data Analysis
+1. Now we will focus on analyzing the data at the borough level and will not need any dates. The purpose of my analysis is to allow people, who are considering moving into a borough, to be able to gauge the level of violence. I understand that race plays a vital role in violence, but I want to remove victim race from my analysis and see if leaving race out, will impact the decision making process.
+```{r echo=TRUE}
+nypd_shooting_data <- nypd_shooting_data[, !names(nypd_shooting_data) %in% c("OCCUR_DATE","VIC_RACE")]
+```
+2. Filter any null values from our dataset
+```{r echo=TRUE}
+nypd_shooting_data <- nypd_shooting_data %>%
+filter_all(all_vars(!is_null(.)))
+nypd_shooting_data
+```
+
+3. View cleaned up shooting data:
+```{r echo=TRUE}
+nypd_shooting_data
+```
+
+4. Group data by Borough, Victim Age Group and Victim Sex. The idea of this analysis is to show the number of shootings for males and females in different age groups in various boroughs: 
+```{r echo=TRUE}
+grouped_by_victim_data <- nypd_shooting_data %>% filter(STATISTICAL_MURDER_FLAG == TRUE) %>%
+  group_by(BORO, VIC_AGE_GROUP, VIC_SEX) %>%
+mutate(BORO_AGE_SEX = paste(BORO, VIC_AGE_GROUP, VIC_SEX, sep = "_")) %>%
+group_by(BORO_AGE_SEX) %>%
+summarise(count = n())
+```
+
+5. Sort data by highest statistical murder flag. We want to focus on the most violent boroughs based on victim counts: 
+```{r echo=TRUE}
+sorted_victim_data <- grouped_by_victim_data %>% 
+arrange(desc(count))
+```
+
+6. View the sorted data: 
+```{r echo=TRUE}
+sorted_victim_data
+```
+
+
+## Plot NYPD Shooting Historic Incidents
+1. We want to group the number of statistical murders by borough, age group, and sex. 
+```{r echo=TRUE}
+grouped_victim_data <- nypd_shooting_data %>% 
+filter(STATISTICAL_MURDER_FLAG == TRUE) %>%
+group_by(BORO, VIC_AGE_GROUP, VIC_SEX) %>%
+mutate(AGE_SEX = paste(VIC_AGE_GROUP, VIC_SEX, sep = "_")) %>%
+group_by(BORO, AGE_SEX) %>%
+summarise(count = n(), .groups="drop")
+```
+
+2. We want to plot the number of statistical murders by borough, age group, and sex
+
+```{r sorted_victim_data, echo=FALSE}
+ggplot(grouped_victim_data, aes(x = BORO, y = count, fill = AGE_SEX)) +
+  geom_bar(stat = "identity", position = "dodge") +    
+  labs(x = "Borough, Age Group, Sex", y = "Statistical Murder Flag (log scale)", title = "NYPD Shooting Historic Incidents")
+```
+
+## Bias in the data
+The data in NYPD shooting statistics could be biased if the analysis is done to determine whether certain neighborhoods are safer than others. The reason is because the demographic data only includes race. It doesn't have socio-economic data, drug addiction rates, and incarcerations. All of these factors contribute to the likelihood of violence. Therefore omitting these factors and only including race could lead to some biased conclusions when doing analysis. To mitigate that, I have completely excluded the race columns so that we would not draw any conclusions based on race and its impact on borough violence.
